@@ -10,33 +10,106 @@ from sklearn.calibration import CalibratedClassifierCV
 from unicodedata import normalize
 from nltk.stem import WordNetLemmatizer
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
+from spellchecker import SpellChecker
+spell_de = SpellChecker(language= 'de')
+spell_fr = SpellChecker(language= 'fr')
+spell_en = SpellChecker(language= 'en')
 path = 'data'
 language_set = {'english','french','german'}
+
+
+## Vectorizing and Creating TF-IDF weighted word Embedding
+class TfidfEmbeddingVectorizer(object):
+    def __init__(self, word2vec):
+        self.word2vec = word2vec
+        self.word2weight = None
+        self.dim = len(next(iter(word2vec.values())))
+
+    def fit(self, X):
+        tfidf = TfidfVectorizer(analyzer=lambda x: x, min_df = 0.05)
+        tfidf.fit(X)
+        print ('Vocab Size' , len(tfidf.vocabulary_))
+        max_idf = max(tfidf.idf_)
+        self.word2weight = defaultdict(
+            lambda: max_idf,
+            [(w, tfidf.idf_[i]) for w, i in tfidf.vocabulary_.items()])
+
+        return self,tfidf.vocabulary_.items()
+
+    def transform(self, X):
+        np_ar = np.array([
+                np.mean([self.word2vec[w] * self.word2weight[w]
+                         for w in words if w in self.word2vec] or
+                        [np.zeros(self.dim)], axis=0)
+                for words in X
+            ])
+        return np_ar
+    
+## Vectorizing and Creating Count and binary weighted word Embedding
 class CountEmbeddingVectorizer(object):
-	def __init__(self, word2vec):
-		self.word2vec = word2vec
-		self.word2weight = None
-		self.dim = len(next(iter(word2vec.values())))
+    def __init__(self, word2vec):
+        self.word2vec = word2vec
+        self.word2weight = None
+        self.dim = len(next(iter(word2vec.values())))
 
-	def fit(self, X):
-		count_vect = CountVectorizer(analyzer=lambda x: x,min_df = 0.001)
-		count_vect.fit(X)
-		print ('Vocab Size' , len(count_vect.vocabulary_))
-		return self,count_vect.vocabulary_.items()
+    def fit(self, X):
+        count_vect = CountVectorizer(analyzer=lambda x: x, min_df = 0.0005)
+        count_vect.fit(X)
+        print ('Vocab Size' , len(count_vect.vocabulary_))
+        return self,count_vect.vocabulary_.items()
 
-	def transform(self, X):
-		np_ar = np.array([
-				np.mean([self.word2vec[w]
-						 for w in set(words) if w in self.word2vec] or
-						[np.zeros(self.dim)], axis=0)
-				for words in X
-			])
-		return np_ar
-	
+    def transform(self, X):
+        np_ar = np.array([
+                np.mean([self.word2vec[w]
+                         for w in words if w in self.word2vec] or
+                        [np.zeros(self.dim)], axis=0)
+                for words in X
+            ])
+        return np_ar
+		
+## Vectorizing and Creating TF-IDF weighted average word Embedding		
+class TfidfWeightedAvgEmbeddingVectorizer(object):
+    def __init__(self, word2vec):
+        self.word2vec = word2vec
+        self.word2weight = None
+        self.dim = len(next(iter(word2vec.values())))
+
+    def fit(self, X):
+        tfidf = TfidfVectorizer(analyzer=lambda x: x, min_df = 0.001)
+        tfidf.fit(X)
+        print ('Vocab Size' , len(tfidf.vocabulary_))
+        max_idf = max(tfidf.idf_)
+        self.word2weight = defaultdict(
+            lambda: max_idf,
+            [(w, tfidf.idf_[i]) for w, i in tfidf.vocabulary_.items()])
+
+        return self,tfidf.vocabulary_.items()
+
+    def transform(self, X):
+        doc2vec = []
+        for words in X:
+            vec2sum = []
+            den_val = 0
+            for w in words:
+                if w in self.word2vec:
+                    weighted_word = self.word2vec[w]* self.word2weight[w]
+                    den_val += self.word2weight[w]
+                else:
+                    weighted_word = np.zeros(self.dim)
+                vec2sum.append(weighted_word)
+            if den_val != 0:
+                doc2vec.append(np.sum(vec2sum,axis=0)/den_val)
+            else:
+                doc2vec.append(np.sum(vec2sum,axis=0))
+        return np.array(doc2vec)
+		
 def getvalueofnode(node):
 	return node.text if node is not None else None
 
 def read_w2v(language):
+	'''
+	Reading Word Embeddings 
+	'''
 	if(language == 'french'):
 		file_name = 'wiki.multi.fr.vec'
 	elif(language == 'english'):
@@ -58,6 +131,9 @@ def read_w2v(language):
 	return w2v
 
 def tokenize(doc, keep_punctuation=True):
+	'''
+	Tokenizing a document
+	'''
 	doc = doc.lower()
 	if(keep_punctuation==False):
 		return np.array(re.findall("[\w]+", doc))
@@ -73,6 +149,9 @@ def tokenize(doc, keep_punctuation=True):
 	return tokenized_list
 
 def cleaningTextTokenizing(line, lang = 'english'):
+	'''
+	Cleaning a document 
+	'''
 	if (lang == 'english'):
 		re_print = re.compile('[^%s]' % re.escape(string.printable))
 		line = normalize('NFD', line).encode('ascii', 'ignore')
@@ -93,7 +172,22 @@ def get_lemmatized_text(tokenized_review):
 		lemmatizedStr.append(lemmatizer.lemmatize(word))
 	return lemmatizedStr
 
+def correct_spelling(spell, misspelled):
+	'''
+	Returning the corrected spelling by using SpellChecker
+	'''
+    correctword = []
+    for word in misspelled:
+        corword = spell.correction(word)
+        s2 = re.sub(r'[^\w\s]',' ',corword)
+        for x in s2.split():
+            correctword.append(x)
+    return correctword
+
 def data_parse(parsed_xml_data, language):
+	'''
+	Parsing the data XML format, Preprocessing it and storing the tokenize reviews along with its True Labels.
+	'''
 	X_data = []
 	y_data = []
 	for node in parsed_xml_data.getroot():
@@ -122,6 +216,9 @@ def data_parse(parsed_xml_data, language):
 	return X_data, y_data
 
 def load_data(language):
+	'''
+	Reading the Train and test data set
+	'''
 	if language in language_set:
 			x_path = os.path.join(path,'amazon-dataset',language)
 			print(x_path)
@@ -137,6 +234,9 @@ def load_data(language):
 
 	
 def words_not_w2vec(vocab, w2v):
+	'''
+	Extracting corpus words not present in word embeddings and its percent
+	'''
 	new_words = []
 	percent_not_words = 0
 	for word,i in list(vocab):
@@ -146,11 +246,14 @@ def words_not_w2vec(vocab, w2v):
 	return new_words, percent_not_words
 
 def vectorize_train(w2v_lang, X_data, y_data, language):
+	'''
+	Training the source language train dataset 
+	'''
 	t0 = time.time()
 	
 	print('------------------------------------------------------------')
 	print('Training model on',language)
-	vectorizer = CountEmbeddingVectorizer(w2v_lang)
+	vectorizer = TfidfEmbeddingVectorizer(w2v_lang)
 	vect,vocab = vectorizer.fit(X_data)
 	unknown_words_list_en, percentage = words_not_w2vec(vocab,w2v_lang)
 	X_t = vectorizer.transform(X_data)
@@ -162,10 +265,13 @@ def vectorize_train(w2v_lang, X_data, y_data, language):
 	return LSVC
 	
 def vectorize_predict(w2v_lang, X_data, y_data, clf, language):
+	'''
+	testing the target language dataset 
+	'''
 	t0 = time.time()
 	print('------------------------------------------------------------')
 	print('Testing model on',language)
-	vectorizer_data = CountEmbeddingVectorizer(w2v_lang)
+	vectorizer_data = TfidfEmbeddingVectorizer(w2v_lang)
 	X ,vocab = vectorizer_data.fit(X_data)
 	X_vect_data = vectorizer_data.transform(X_data)
 	result = clf.predict(X_vect_data)
