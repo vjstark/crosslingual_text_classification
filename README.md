@@ -9,7 +9,7 @@ This project aim to create a sentiment classification model to be trained in one
 
 ## Datasets
 Amazon review datasets:
-* Book review dataset in [*data/amazon-data*](https://github.com/sunnymodi21/crosslingual-classification/tree/master/data/amazon-dataset)
+* Book review dataset in [*data/amazon-data*](https://github.com/vjstark/crosslingual_text_classification/tree/master/data/amazon-dataset)
 * 2000 for training and 2000 for testing
 * Rating used as labels for positve or negative sentiment
 
